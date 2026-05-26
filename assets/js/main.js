@@ -190,33 +190,90 @@
   }
 
   if (audioBtn && audio) {
-    /* tentativa de autoplay ao entrar:
-       1) tenta tocar com som (provável bloqueio)
-       2) se bloquear, toca em mudo e pede “Ativar som” */
-    (function initAutoplay() {
-      audio.muted = false;
-      tryPlay().then(function (okWithSound) {
-        if (okWithSound) {
-          setToastVisible(false);
-          return;
-        }
+    var audioUnlocked = false;
+    var audioUnlockToastShown = false;
 
-        audio.muted = true;
-        tryPlay().then(function (okMuted) {
-          if (okMuted) {
-            setToastVisible(true);
-          } else {
+    function isAudioControl(target) {
+      if (!target || !target.closest) return false;
+      return !!target.closest("#audio-toggle, #audio-toast, #audio-toast-btn");
+    }
+
+    function unlockAudioFromGesture(e) {
+      if (audioUnlocked) return;
+      if (e && isAudioControl(e.target)) return;
+
+      /* play() precisa ser chamado de forma síncrona dentro do gesto (toque/scroll). */
+      audio.muted = false;
+      var playAttempt = audio.play();
+
+      if (!playAttempt || typeof playAttempt.then !== "function") {
+        if (!audio.paused) {
+          audioUnlocked = true;
+          setAudioUi(true);
+          setToastVisible(false);
+          removeGestureListeners();
+        }
+        return;
+      }
+
+      playAttempt
+        .then(function () {
+          audioUnlocked = true;
+          setAudioUi(true);
+          setToastVisible(false);
+          try {
+            localStorage.setItem(STORAGE_AUDIO_PLAYING, "1");
+          } catch (err) {}
+          removeGestureListeners();
+        })
+        .catch(function () {
+          setAudioUi(false);
+          if (!audioUnlockToastShown) {
+            audioUnlockToastShown = true;
             setToastVisible(true);
           }
         });
+    }
+
+    /* No celular, o scroll dispara touchmove — touchstart sozinho às vezes não libera o áudio. */
+    function onTouchStart(e) {
+      unlockAudioFromGesture(e);
+    }
+
+    function onTouchMove(e) {
+      unlockAudioFromGesture(e);
+    }
+
+    var gestureEvents = ["pointerdown", "click", "keydown", "wheel"];
+
+    function removeGestureListeners() {
+      gestureEvents.forEach(function (eventName) {
+        document.removeEventListener(eventName, unlockAudioFromGesture, true);
       });
-    })();
+      document.removeEventListener("touchstart", onTouchStart, true);
+      document.removeEventListener("touchmove", onTouchMove, true);
+    }
+
+    gestureEvents.forEach(function (eventName) {
+      document.addEventListener(eventName, unlockAudioFromGesture, {
+        capture: true,
+        passive: true,
+      });
+    });
+
+    document.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
+    document.addEventListener("touchmove", onTouchMove, { capture: true, passive: true });
 
     audioBtn.addEventListener("click", function () {
       if (audio.paused) {
         audio.muted = false;
         setToastVisible(false);
-        tryPlay();
+        tryPlay().then(function (ok) {
+          if (ok) {
+            audioUnlocked = true;
+            removeGestureListeners();
+          }
+        });
       } else {
         pauseAudio();
       }
@@ -226,7 +283,12 @@
       audioToastBtn.addEventListener("click", function () {
         audio.muted = false;
         setToastVisible(false);
-        tryPlay();
+        tryPlay().then(function (ok) {
+          if (ok) {
+            audioUnlocked = true;
+            removeGestureListeners();
+          }
+        });
       });
     }
 
@@ -236,13 +298,6 @@
     audio.addEventListener("pause", function () {
       if (!audio.ended) setAudioUi(false);
     });
-
-    /* localStorage: guarda se estava tocando (útil se no futuro houver mais páginas; autoplay continua exigindo clique no botão) */
-    try {
-      if (localStorage.getItem(STORAGE_AUDIO_PLAYING) === "1") {
-        setAudioUi(false);
-      }
-    } catch (err) {}
   }
 
   /* --- Hero: foto principal ausente? --- */
